@@ -971,9 +971,11 @@ static void output_ap_list(void)
         uint8_t * mac = (uint8_t*)pnode->info.bssid;
         ap_info_t *info = &pnode->info;
 
-        //a good format
-        ln_at_printf("+CWLAP:[%02X:%02X:%02X:%02X:%02X:%02X]enc=%d,ch=%02d,rssi=%3d,ssid:\"%s\"\r\n", \
-        mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],info->authmode,info->channel,info->rssi,info->ssid);
+        //a good format //AT+CWLAP (SSID !=NULL)
+        if(strlen(info->ssid) > 0) {
+            ln_at_printf("+CWLAP:[%02X:%02X:%02X:%02X:%02X:%02X]enc=%d,ch=%02d,rssi=%3d,ssid:\"%s\"\r\n", \
+            mac[0],mac[1],mac[2],mac[3],mac[4],mac[5],info->authmode,info->channel,info->rssi,info->ssid);
+        }
     }
 
     wifi_manager_ap_list_update_enable(LN_TRUE);
@@ -984,8 +986,8 @@ static ln_at_err_t ln_at_exec_scan(const char *name)
     LN_UNUSED(name);
 
     #define CONNECTED_SCAN_TIMES     (6)
-    #define DEFAULT_SCAN_TIMES       (1)
-    #define SCAN_TIMEOUT             (1500)
+    #define DEFAULT_SCAN_TIMES       4//(1)
+    #define SCAN_TIMEOUT             (2000)
 
     int8_t scan_cnt = DEFAULT_SCAN_TIMES;
 
@@ -1008,7 +1010,9 @@ static ln_at_err_t ln_at_exec_scan(const char *name)
         return LN_AT_ERR_COMMON;
     }
 
-    sysparam_sta_scan_cfg_get(&scan_cfg);
+//    sysparam_sta_scan_cfg_get(&scan_cfg);
+    scan_cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    scan_cfg.scan_time = 30;
 
     //1. creat sem, reg scan complete callback.
     sem_scan = ln_at_sem_create(0, 1);
@@ -1020,6 +1024,7 @@ static ln_at_err_t ln_at_exec_scan(const char *name)
         sta_status == WIFI_STA_STATUS_DISCONNECTING)
     {
         scan_cnt = CONNECTED_SCAN_TIMES;
+        scan_cfg.scan_time = 40;
     }
     LOG(LOG_LVL_INFO, "Scan cnt:%d; scan timeout:%d\r\n", scan_cnt, SCAN_TIMEOUT);
 
@@ -1036,7 +1041,7 @@ static ln_at_err_t ln_at_exec_scan(const char *name)
     wifi_manager_reg_event_callback(WIFI_MGR_EVENT_STA_SCAN_COMPLETE, NULL);
     ln_at_sem_delete(sem_scan);
     sem_scan = NULL;
-    wifi_manager_cleanup_scan_results();
+//    wifi_manager_cleanup_scan_results();
 
     ln_at_printf(LN_AT_RET_OK_STR);
     return LN_AT_ERR_NONE;
@@ -2957,19 +2962,27 @@ LN_AT_CMD_REG(CIPAP_DEF, ln_at_get_cipap_def, ln_at_set_cipap_def, NULL, NULL);
 
 static ln_at_err_t ln_at_get_ate_ok(const char *name)
 {
-    int8_t val = 0;
+    int8_t val[4] = {0};
+    int8_t _val = 0;
 
-    ln_nvds_get_xtal_comp_val((uint8_t *)&val);
-    ln_at_printf("+XTAL_COMP:%d\r\n", val);
+    ln_nvds_get_xtal_comp_val((uint8_t *)&_val);
+    ln_at_printf("+XTAL_COMP:%d\r\n", _val);
+    ln_nvds_get_tx_power_comp((uint8_t *)&_val);
+    ln_at_printf("+TXPOWER_COMP:%d\r\n", _val);
+    ln_nvds_get_tx_power_b_comp((uint8_t *)&_val);
+    ln_at_printf("+TXPOWER_B_COMP:%d\r\n", _val);
+    ln_nvds_get_tx_power_gn_comp((uint8_t *)&_val);
+    ln_at_printf("+TXPOWER_GN_COMP:%d\r\n", _val);
 
-    ln_nvds_get_tx_power_comp((uint8_t *)&val);
-    ln_at_printf("+TXPOWER_COMP:%d\r\n", val);
+    ln_nvds_get_tx_power_b_low_mid_hi_comp((uint8_t *)&val[0], (uint8_t *)&val[1], (uint8_t *)&val[2], (uint8_t *)&val[3]);
+    ln_at_printf("+TXPOWER_B_LOW_CH_COMP:%d\r\n", val[0]);
+    ln_at_printf("+TXPOWER_B_MID_CH_COMP:%d\r\n", val[1]);
+    ln_at_printf("+TXPOWER_B_HIGH_CH_COMP:%d\r\n", val[2]);
 
-    ln_nvds_get_tx_power_b_comp((uint8_t *)&val);
-    ln_at_printf("+TXPOWER_B_COMP:%d\r\n", val);
-
-    ln_nvds_get_tx_power_gn_comp((uint8_t *)&val);
-    ln_at_printf("+TXPOWER_GN_COMP:%d\r\n", val);
+    ln_nvds_get_tx_power_gn_low_mid_hi_comp((uint8_t *)&val[0], (uint8_t *)&val[1], (uint8_t *)&val[2], (uint8_t *)&val[3]);
+    ln_at_printf("+TXPOWER_GN_LOW_CH_COMP:%d\r\n", val[0]);
+    ln_at_printf("+TXPOWER_GN_MID_CH_COMP:%d\r\n", val[1]);
+    ln_at_printf("+TXPOWER_GN_HIGH_CH_COMP:%d\r\n", val[2]);
 
     ln_at_printf(LN_AT_RET_OK_STR);
     return LN_AT_ERR_NONE;
@@ -2980,7 +2993,7 @@ static ln_at_err_t ln_at_set_ate_ok(uint8_t para_num, const char *name)
     bool is_default = false;
     int val = 0;
     int8_t xtal_cap = 0, tx_power = 0;
-    int8_t tx_pwr_b = 0, tx_pwr_gn = 0;
+    int8_t b_comp[4] = {0}, gn_comp[4] = {0};
 
     if (para_num != 1) {
         goto __exit;
@@ -2994,32 +3007,30 @@ static ln_at_err_t ln_at_set_ate_ok(uint8_t para_num, const char *name)
         ln_nvds_set_ate_result('F');
     } 
     else if (val == 1) {
-        extern int ate_get_xtalcap_calibration_info(void);
-        extern int ate_get_txpower_calibration_info(void);
-        extern int ate_get_xtalcap_txpower_offset (int8_t *xtal_cap, int8_t *tx_power);
-
+        extern int ate_is_calibrated_xtal_cap(void);
         extern int ate_is_calibrated_txpower_b(void);
         extern int ate_is_calibrated_txpower_gn(void);
-        extern int ate_get_txpower_b_gn_offset (int8_t *tx_pwr_b, int8_t *tx_pwr_gn);
 
-        ate_get_xtalcap_txpower_offset(&xtal_cap, &tx_power);
-        ate_get_txpower_b_gn_offset(&tx_pwr_b, &tx_pwr_gn);
+        extern int ate_get_xtalcap_offset (int8_t *xtal_cap);
+        extern int ate_get_txpower_b_gn_ch_offset (int8_t *tx_pwr_b, int8_t *tx_pwr_gn);
+
+        ate_get_xtalcap_offset(&xtal_cap);
+        ate_get_txpower_b_gn_ch_offset(&b_comp[0], &gn_comp[0]);
 
         /* 1. save to nvds(flash) */
         //1.1 save XTAL_CAP
-        if (ate_get_xtalcap_calibration_info()) {
+        if (ate_is_calibrated_xtal_cap()) {
             ln_nvds_set_xtal_comp_val(xtal_cap);
         }
 
         //1.2 save TX_POWER
-        if (ate_get_txpower_calibration_info()) {
-            ln_nvds_set_tx_power_comp(tx_power);
-        }
         if (ate_is_calibrated_txpower_b()) {
-            ln_nvds_set_tx_power_b_comp(tx_pwr_b);
+            LOG(LOG_LVL_INFO, "b_comp0=%d, b_comp1=%d, b_comp2=%d, b_comp3=0x%02X\r\n", b_comp[0], b_comp[1], b_comp[2], b_comp[3]);
+            ln_nvds_set_tx_power_b_low_mid_hi_comp(b_comp[0], b_comp[1], b_comp[2], b_comp[3]);
         }
         if (ate_is_calibrated_txpower_gn()) {
-            ln_nvds_set_tx_power_gn_comp(tx_pwr_gn);
+            LOG(LOG_LVL_INFO, "gn_comp0=%d, gn_comp1=%d, gn_comp2=%d, gn_comp3=0x%02X\r\n", gn_comp[0], gn_comp[1], gn_comp[2], gn_comp[3]);
+            ln_nvds_set_tx_power_gn_low_mid_hi_comp(gn_comp[0], gn_comp[1], gn_comp[2], gn_comp[3]);
         }
 
         //1.3 save ATE result
