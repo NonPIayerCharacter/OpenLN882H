@@ -581,6 +581,11 @@
               <FileType>1</FileType>
               <FilePath>..\..\..\..\components\utils\wrap_stdio.c</FilePath>
             </File>
+            <File>
+              <FileName>runtime.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\..\..\..\components\utils\runtime\runtime.c</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

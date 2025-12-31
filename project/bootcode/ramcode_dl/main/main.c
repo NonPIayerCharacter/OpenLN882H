@@ -3,6 +3,7 @@
 #include "hal/hal_cache.h"
 #include "hal/hal_flash.h"
 #include "mode_ctrl.h"
+#include "utils/runtime/runtime.h"
 
 static void set_interrupt_priority(void)
 {
@@ -21,7 +22,7 @@ int main(int argc, char* argv[])
 
     hal_flash_init();
     flash_cache_disable();
-
+    ln_runtime_measure_init();
     bootram_ctrl_init();
     bootram_ctrl_loop();
 

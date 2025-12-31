@@ -13,8 +13,10 @@
 
 void assert_failed(uint8_t* file, uint32_t line)
 {
+#ifndef NO_LOG_RAMCODE
     uint8_t *file_name = file;
     uint32_t line_num  = line;
+#endif
 
     while(1)
     {

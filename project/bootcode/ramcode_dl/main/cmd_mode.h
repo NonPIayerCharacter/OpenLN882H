@@ -49,6 +49,7 @@ int cmd_flash_info(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_test(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_uid(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_id(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+int cmd_flash_crc32(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 #ifdef __cplusplus
 }
 #endif  // __cplusplus

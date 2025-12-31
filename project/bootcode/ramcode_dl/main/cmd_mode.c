@@ -1,6 +1,9 @@
 #include "cmd_mode.h"
 #include "file_mode.h"
 #include "hal/hal_flash.h"
+#include "utils/runtime/runtime.h"
+#include "utils/crc16.h"
+#include "utils/crc32.h"
 
 #define BOOTRAM_CMD_PROMPT   "\r\nbootram> "
 #define BOOTRAM_DUMP_COL_NUM (16)
@@ -10,21 +13,21 @@ static bootram_cmd_tbl_t bootram_cmd_list[] = {
         "ferase",
         3,
         cmd_flash_erase,
-        "Flash erase command.\r\nCommand formate: ferase flash_offset erase_size\r\n\tExample: ferase 0xD000 0x4000\r\n"
+        "Flash erase command.\r\nCommand format: ferase flash_offset erase_size\r\n\tExample: ferase 0xD000 0x4000\r\n"
     },
 
     {
         "ferase_all",
         1,
         cmd_flash_erase_all,
-        "Erase the all flash.\r\nCommand formate: ferase_all\r\n\tExample: ferase_all\r\n"
+        "Erase the all flash.\r\nCommand format: ferase_all\r\n\tExample: ferase_all\r\n"
     },
 
     {
         "fdump",
         3,
         cmd_flash_dump,
-        "Flash data dump command.\r\nCommand formate: fdump flash_offset dump_size(dump_size < 0x100)\r\n\tExample: fdump 0xD000 0x100\r\n"
+        "Flash data dump command.\r\nCommand format: fdump flash_offset dump_size\r\n\tExample: fdump 0xD000 0x100\r\n"
     },
 
     {
@@ -96,7 +99,14 @@ static bootram_cmd_tbl_t bootram_cmd_list[] = {
         cmd_flash_id,
         "get flash id.\r\n"
     },
-    
+
+    {
+        "flash_crc32",
+        3,
+        cmd_flash_crc32,
+        "Flash CRC32.\r\nCommand format: flash_crc32 flash_offset size\r\n\tExample: flash_crc32 0x0 0x1000\r\n"
+    },
+
 
 #if (defined(DEBUG_FLASH_ROBUST) && (DEBUG_FLASH_ROBUST == 1))
     {
@@ -534,35 +544,206 @@ int bootram_console_stdio_write(char* buf, size_t size)
     ret = bootram_serial_write((const void*)buf, size);
     return ret;
 }
+
+#define SOH      0x01
+#define STX      0x02
+#define EOT      0x04
+#define ACK      0x06
+#define NAK      0x15
+#define CAN      0x18
+#define PAD_BYTE 0xFF
+
+#define XM_128_SIZE  128
+#define XM_1K_SIZE   1024
+#define MAX_RETRY    10
+#define POLL_DELAY   1
+#define CRC_TIMEOUT  3000
+#define RESP_TIMEOUT 3000
+
 int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
 {
+    uint32_t flash_offset = 0;
+    uint32_t size = 0;
+    uint8_t  block_num = 1;
+    uint8_t  resp;
     int      ret = -1;
-    uint8_t  page_buffer[FLASH_PAGE_SIZE + 1];
-    uint32_t flash_offset = 0, size = 0, page_num = 0, i = 0;
 
-    if (argv[1]) {
-        flash_offset = strtoul(argv[1], NULL, 0);
-    }
-    if (argv[2]) {
-        size = strtoul(argv[2], NULL, 0);
-    }
-    uint32_t readLen = 0x200;
-    uint8_t buf[readLen + 2];
-    if(size > 0 && (size % readLen == 0))
+    bool     use_1k = true;
+    int      retries;
+
+    uint8_t  packet[3 + XM_1K_SIZE + 2];
+
+    if(argv[1]) flash_offset = strtoul(argv[1], NULL, 0);
+    if(argv[2]) size = strtoul(argv[2], NULL, 0);
+
+    if(size == 0) return -1;
+
+    uint32_t delayed = 0;
+    while(delayed < CRC_TIMEOUT)
     {
-        for(; flash_offset < flash_offset + size; flash_offset += readLen)
+        if(bootram_serial_read(&resp, 1) == 1)
         {
-            hal_flash_read(flash_offset, readLen, buf);
-            uint16_t crc = crc16_ccitt(buf, readLen);
-            memcpy(&buf[readLen], &crc, sizeof(crc));
-            bootram_serial_write(buf, readLen + 2);
-            size -= readLen;
-            memset(buf, 0, readLen + 2);
+            if(resp == 'C')
+            {
+                break;
+            }
+            if(resp == CAN)
+            {
+                return -1;
+            }
         }
-        return 0;
+        ln_block_delayms(POLL_DELAY);
+        delayed += POLL_DELAY;
+    }
+
+    if(delayed >= CRC_TIMEOUT)
+    {
+        bootram_serial_setbaudrate(115200);
+        bootram_serial_flush();
+        return -1;
+    }
+
+    while(size > 0)
+    {
+        uint32_t data_size = use_1k ? XM_1K_SIZE : XM_128_SIZE;
+        uint8_t  header = use_1k ? STX : SOH;
+        uint32_t chunk = (size >= data_size) ? data_size : size;
+
+        retries = 0;
+
+        while(retries < MAX_RETRY)
+        {
+            packet[0] = header;
+            packet[1] = block_num;
+            packet[2] = ~block_num;
+
+            hal_flash_read(flash_offset, chunk, &packet[3]);
+
+            if(chunk < data_size)
+            {
+                memset(&packet[3 + chunk], PAD_BYTE, data_size - chunk);
+            }
+
+            uint16_t crc = crc16_ccitt((const char*)&packet[3], data_size);
+            packet[3 + data_size] = (crc >> 8) & 0xFF;
+            packet[3 + data_size + 1] = crc & 0xFF;
+
+            bootram_serial_write(packet, 3 + data_size + 2);
+
+            uint32_t resp_wait = 0;
+            while(resp_wait < RESP_TIMEOUT)
+            {
+                if(bootram_serial_read(&resp, 1) == 1)
+                {
+                    break;
+                }
+                ln_block_delayms(POLL_DELAY);
+                resp_wait += POLL_DELAY;
+            }
+
+            if(resp_wait >= RESP_TIMEOUT)
+            {
+                retries++;
+                continue;
+            }
+
+            if(resp == ACK)
+            {
+                break;
+            }
+
+            if(resp == NAK)
+            {
+                retries++;
+                continue;
+            }
+
+            if(resp == CAN)
+            {
+                bootram_serial_setbaudrate(115200);
+                bootram_serial_flush();
+                return -1;
+            }
+        }
+
+        if(use_1k && retries >= MAX_RETRY / 2)
+        {
+            use_1k = false;
+        }
+
+        if(retries >= MAX_RETRY)
+        {
+            resp = CAN;
+            bootram_serial_write(&resp, 1);
+            bootram_serial_write(&resp, 1);
+            bootram_serial_setbaudrate(115200);
+            bootram_serial_flush();
+            return -1;
+        }
+
+        flash_offset += chunk;
+        size -= chunk;
+        block_num++;
+    }
+
+    retries = 0;
+    while(retries < MAX_RETRY)
+    {
+        resp = EOT;
+        bootram_serial_write(&resp, 1);
+
+        uint32_t resp_wait = 0;
+        while(resp_wait < RESP_TIMEOUT)
+        {
+            if(bootram_serial_read(&resp, 1) == 1)
+            {
+                break;
+            }
+            ln_block_delayms(POLL_DELAY);
+            resp_wait += POLL_DELAY;
+        }
+
+        if(resp_wait < RESP_TIMEOUT && resp == ACK)
+        {
+            ret = 0;
+            break;
+        }
+
+        retries++;
     }
 
     return ret;
+}
+#define BUF_LEN 0x1000
+int cmd_flash_crc32(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
+{
+    uint32_t flash_offset = 0;
+    uint32_t size = 0;
+    crc32_ctx_t crc_ctx = { 0, };
+    uint32_t crc32_result = 0;
+
+    uint8_t  buf[0x1000];
+
+    if(argv[1]) flash_offset = strtoul(argv[1], NULL, 0);
+    if(argv[2]) size = strtoul(argv[2], NULL, 0);
+
+    if(size == 0) return -1;
+    ln_crc32_init(&crc_ctx);
+
+    for(int i = 0; i < size / BUF_LEN; i++)
+    {
+        hal_flash_read(flash_offset, BUF_LEN, buf);
+
+        ln_crc32_update(&crc_ctx, buf, BUF_LEN);
+
+        flash_offset += BUF_LEN;
+    }
+
+    hal_flash_read(flash_offset, size % BUF_LEN, buf);
+    ln_crc32_update(&crc_ctx, buf, size % BUF_LEN);
+    crc32_result = ln_crc32_final(&crc_ctx);
+    bootram_serial_write(&crc32_result, 4);
+    return 0;
 }
 
 /**
