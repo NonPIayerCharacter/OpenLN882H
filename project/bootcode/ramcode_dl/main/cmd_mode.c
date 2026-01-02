@@ -309,18 +309,8 @@ int cmd_flash_info(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
 
 int cmd_flash_id(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
 {
-    uint32_t ret        = 0;
-    char     buf[50]    = {0};
-    
-    ret = bootram_flash_info();
-    
-    sprintf(buf, "0x%X", ret);
-
-    for (int i = 0; i < strlen(buf); i++) {
-        uint8_t ch = buf[i];
-        bootram_serial_write(&ch, 1);
-    }
-    
+    uint32_t ret = bootram_flash_info();
+    bootram_serial_write(&ret, 4);
     return 0;
 }
 
@@ -545,6 +535,26 @@ int bootram_console_stdio_write(char* buf, size_t size)
     return ret;
 }
 
+int serial_read_timeout(uint8_t* ch, uint32_t len, int timeout_ms)
+{
+    uint32_t size = 0;
+    uint32_t exp_len = len;
+    uint32_t act_len = 0;
+    while((timeout_ms--) > 0)
+    {
+        size = bootram_serial_read(ch, exp_len);
+        ch += size;
+        act_len += size;
+        exp_len -= size;
+        if(act_len == len)
+        {
+            return act_len;
+        }
+        ln_block_delayms(1);
+    }
+    return act_len;
+}
+
 #define SOH      0x01
 #define STX      0x02
 #define EOT      0x04
@@ -555,10 +565,9 @@ int bootram_console_stdio_write(char* buf, size_t size)
 
 #define XM_128_SIZE  128
 #define XM_1K_SIZE   1024
-#define MAX_RETRY    10
-#define POLL_DELAY   1
-#define CRC_TIMEOUT  3000
-#define RESP_TIMEOUT 3000
+#define MAX_RETRY    20
+#define MODE_TIMEOUT 3000
+#define RESP_TIMEOUT 1000
 
 int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
 {
@@ -569,37 +578,50 @@ int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
     int      ret = -1;
 
     bool     use_1k = true;
+    bool     use_crc = true;
     int      retries;
 
     uint8_t  packet[3 + XM_1K_SIZE + 2];
 
     if(argv[1]) flash_offset = strtoul(argv[1], NULL, 0);
-    if(argv[2]) size = strtoul(argv[2], NULL, 0);
+    if(argv[2]) size         = strtoul(argv[2], NULL, 0);
 
     if(size == 0) return -1;
 
-    uint32_t delayed = 0;
-    while(delayed < CRC_TIMEOUT)
+    while(bootram_serial_read(&resp, 1));
+    resp = 0;
+
+    int mode_delay = MODE_TIMEOUT;
+    while(mode_delay > 0)
     {
-        if(bootram_serial_read(&resp, 1) == 1)
+        mode_delay -= 100;
+        if(serial_read_timeout(&resp, 1, 100))
         {
             if(resp == 'C')
             {
+                use_crc = true;
+                use_1k = true;
                 break;
             }
-            if(resp == CAN)
+            else if(resp == NAK)
+            {
+                use_crc = false;
+                use_1k = false;
+                break;
+            }
+            else if(resp == CAN)
             {
                 return -1;
             }
         }
-        ln_block_delayms(POLL_DELAY);
-        delayed += POLL_DELAY;
     }
-
-    if(delayed >= CRC_TIMEOUT)
+    if(mode_delay <= 0)
     {
-        bootram_serial_setbaudrate(115200);
+        resp = CAN;
+        bootram_serial_write(&resp, 1);
+        bootram_serial_write(&resp, 1);
         bootram_serial_flush();
+        bootram_serial_setbaudrate(115200);
         return -1;
     }
 
@@ -624,24 +646,25 @@ int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
                 memset(&packet[3 + chunk], PAD_BYTE, data_size - chunk);
             }
 
-            uint16_t crc = crc16_ccitt((const char*)&packet[3], data_size);
-            packet[3 + data_size] = (crc >> 8) & 0xFF;
-            packet[3 + data_size + 1] = crc & 0xFF;
+            uint32_t pkt_len = 3 + data_size;
 
-            bootram_serial_write(packet, 3 + data_size + 2);
-
-            uint32_t resp_wait = 0;
-            while(resp_wait < RESP_TIMEOUT)
+            if(use_crc)
             {
-                if(bootram_serial_read(&resp, 1) == 1)
-                {
-                    break;
-                }
-                ln_block_delayms(POLL_DELAY);
-                resp_wait += POLL_DELAY;
+                uint16_t crc = crc16_ccitt((const char*)&packet[3], data_size);
+                packet[pkt_len++] = (crc >> 8) & 0xFF;
+                packet[pkt_len++] = crc & 0xFF;
+            }
+            else
+            {
+                uint8_t sum = 0;
+                for(uint32_t i = 0; i < data_size; i++)
+                    sum += packet[3 + i];
+                packet[pkt_len++] = sum;
             }
 
-            if(resp_wait >= RESP_TIMEOUT)
+            bootram_serial_write(packet, pkt_len);
+
+            if(!serial_read_timeout(&resp, 1, RESP_TIMEOUT))
             {
                 retries++;
                 continue;
@@ -660,13 +683,17 @@ int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
 
             if(resp == CAN)
             {
-                bootram_serial_setbaudrate(115200);
-                bootram_serial_flush();
-                return -1;
+                if(serial_read_timeout(&resp, 1, RESP_TIMEOUT) == 1 && resp == CAN)
+                {
+                    bootram_serial_flush();
+                    bootram_serial_setbaudrate(115200);
+                    return -1;
+                }
+                retries++;
             }
         }
 
-        if(use_1k && retries >= MAX_RETRY / 2)
+        if(use_1k && retries >= MAX_RETRY / 4)
         {
             use_1k = false;
         }
@@ -676,8 +703,8 @@ int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
             resp = CAN;
             bootram_serial_write(&resp, 1);
             bootram_serial_write(&resp, 1);
-            bootram_serial_setbaudrate(115200);
             bootram_serial_flush();
+            bootram_serial_setbaudrate(115200);
             return -1;
         }
 
@@ -692,18 +719,7 @@ int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[])
         resp = EOT;
         bootram_serial_write(&resp, 1);
 
-        uint32_t resp_wait = 0;
-        while(resp_wait < RESP_TIMEOUT)
-        {
-            if(bootram_serial_read(&resp, 1) == 1)
-            {
-                break;
-            }
-            ln_block_delayms(POLL_DELAY);
-            resp_wait += POLL_DELAY;
-        }
-
-        if(resp_wait < RESP_TIMEOUT && resp == ACK)
+        if(serial_read_timeout(&resp, 1, RESP_TIMEOUT) && resp == ACK)
         {
             ret = 0;
             break;
