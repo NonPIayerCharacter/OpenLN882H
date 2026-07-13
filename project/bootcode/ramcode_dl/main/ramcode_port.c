@@ -27,7 +27,7 @@ static Serial_t bootram_fd;
 
 // buffer for sector alignment.
 
-#define UART_RX_BUF_LEN (1024*(16*2+2))
+#define UART_RX_BUF_LEN (1024*(4*2+2))
 
 static uint8_t uart_rx_buf[UART_RX_BUF_LEN];
 static uint8_t temp_4k_buffer[SIZE_4KB] = {0};
@@ -204,6 +204,7 @@ size_t bootram_serial_read(void* buf, size_t size)
             return size;
         }
     }
+		return 0;
 }
 
 void UART0_IRQHandler(void)

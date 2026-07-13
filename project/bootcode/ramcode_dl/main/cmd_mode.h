@@ -43,13 +43,18 @@ int cmd_download_baudrate(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_download_startaddr(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_upgrade(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+int cmd_flash_dump_z(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+int cmd_flash_write(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+int cmd_flash_write_z(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_erase_all(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_erase(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_info(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
-int cmd_flash_test(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+//int cmd_flash_test(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_uid(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_id(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 int cmd_flash_crc32(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+int cmd_otp_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
+int cmd_efuse_dump(bootram_cmd_tbl_t* cmdtbl, int argc, char* argv[]);
 #ifdef __cplusplus
 }
 #endif  // __cplusplus

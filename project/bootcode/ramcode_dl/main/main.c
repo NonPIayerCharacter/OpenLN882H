@@ -21,6 +21,7 @@ int main(int argc, char* argv[])
     __enable_irq();
 
     hal_flash_init();
+    hal_flash_quad_mode_enable(1);
     flash_cache_disable();
     ln_runtime_measure_init();
     bootram_ctrl_init();
@@ -46,4 +47,12 @@ void UsageFault_Handler(void)
 {
     while (1)
         ;
+}
+
+void* malloc(size_t size)
+{
+  extern unsigned int Image$$HEAP_SPACE0$$ZI$$Base;
+  extern unsigned int Image$$HEAP_SPACE0$$ZI$$Limit;
+	if(size > (uint32_t)(&Image$$HEAP_SPACE0$$ZI$$Limit) - (uint32_t)(&Image$$HEAP_SPACE0$$ZI$$Base)) return NULL;
+	return &Image$$HEAP_SPACE0$$ZI$$Base;
 }

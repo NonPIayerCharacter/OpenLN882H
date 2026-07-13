@@ -2,14 +2,17 @@
 
 #include "..\..\..\..\mcu\ln882h\mem_map_ln882h.h"
 
-LOAD_BOOTRAM  BOOTRAM_BASE  BOOTRAM_LIMIT  {
+LOAD_BOOTRAM  BOOTRAM_BASE  (SIZE_4KB*8)  {
     BOOT_HEADER_SECTION +0{
         *.o(boot_header_area);
     }
 
-    BOOTRAM_EXEC_DECTION +0 ALIGN 0x100{
+    BOOTRAM_EXEC_DECTION +0 ALIGN 0x100 ((RETENTION_MEM_BASE-BOOTRAM_BASE+RETENTION_MEM_SIZE-1024)-167744){
         startup_*.o(RESET,+First);
         *.o(InRoot$$Sections);
         *.o(+RO,+RW,+ZI);
+    }
+    HEAP_SPACE0 +0 EMPTY (RETENTION_MEM_BASE+RETENTION_MEM_SIZE-1024)-ImageLimit(BOOTRAM_EXEC_DECTION)
+    {
     }
 }

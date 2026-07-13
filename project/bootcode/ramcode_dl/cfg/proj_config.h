@@ -29,8 +29,8 @@
 #endif
 
 #define FLASH_XIP                 DISABLE
-#define HAL_ASSERT_EN             ENABLE
-#define LN_ASSERT_EN              ENABLE
+#define HAL_ASSERT_EN             DISABLE
+#define LN_ASSERT_EN              DISABLE
 
 /*
  * Hardware config
@@ -49,6 +49,6 @@
 #define FLASH_MAX_SIZE_ON_CHIP    (1024 * 1024 * 4)
 
 // verify data which has been programmed into flash.
-#define FLASH_VERIFY_ENABLE       (1)
+#define FLASH_VERIFY_ENABLE       (0)
 
 #endif /* _PROJ_CONFIG_H_ */
